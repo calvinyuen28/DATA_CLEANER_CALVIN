@@ -4,6 +4,7 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.text.ParseException;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
@@ -253,8 +254,14 @@ public class DataCleaner {
                 break;
             case 5: // SSL
                 if (cell.getCellType() == CellType.STRING) {
-                    String cellValue = cell.getStringCellValue().toUpperCase();
-                    cellValue = cellValue.replace("CMA", "CMA CGM");
+                    String cellValue = cell.getStringCellValue().toUpperCase().trim();
+                    // Replace "CMA" only if it is the only text in the cell
+                    if (cellValue.equals("CMA")) {
+                        cellValue = "CMA CGM";
+                    }
+                    // Remove codes that start with 4 capital letters followed by 7 digits
+                    cellValue = cellValue.replaceAll("\\b[A-Z]{4}\\d{7}\\b", "").trim();
+                    // Set the updated value back to the cell
                     cell.setCellValue(cellValue);
                 }
                 break;
@@ -335,6 +342,13 @@ public class DataCleaner {
             cellValue = cellValue.replaceAll("3\\*|3X", "").replaceAll("4\\*|4X", "");
             cellValue = cellValue.replace("DC", "GP").replace("DV", "GP");
             cellValue = cellValue.replace("HC", "HQ").replace("HG", "HQ");
+            cellValue = cellValue.replace("20>40", "40HQ").replace("40OS", "40HQ");
+            cellValue = cellValue.replace("DS", "GP").replace("FT", "GP");
+            cellValue = cellValue.replace("?", "HQ").replace("40HRNOR", "40HQ");
+
+            // Remove codes that start with 4 capital letters followed by 7 digits
+            cellValue = cellValue.replaceAll("\\b[A-Z]{4}\\d{7}\\b", "").trim();
+
             cell.setCellValue(cellValue);
         }
     }
@@ -362,6 +376,12 @@ public class DataCleaner {
     private static void cleanRailCell(Cell cell) {
         if (cell.getCellType() == CellType.STRING) {
             String cellValue = cell.getStringCellValue().toUpperCase();
+            // Remove codes that start with 4 capital letters followed by 7 digits
+            cellValue = cellValue.replaceAll("\\b[A-Z]{4}\\d{7}\\b", "").trim();
+            
+            // Trim the cell value again after replacement
+            cellValue = cellValue.trim();
+            
             if (cellValue.contains("BNSF")) {
                 cell.setCellValue("BNSF");
             } else if (cellValue.contains("BALTIMORE")) {
@@ -376,6 +396,7 @@ public class DataCleaner {
                 cell.setCellValue("CN");
             } else if (cellValue.contains("CP")) {
                 if (cellValue.contains("LAX TRACPAC")) {
+                    // Do nothing, keep the original value
                 } else {
                     cell.setCellValue("CP");
                 }
@@ -439,9 +460,13 @@ public class DataCleaner {
                 cell.setCellValue("UP");
             } else if (cellValue.contains("WIL")) {
                 cell.setCellValue("WILMINGTON PORT");
-            } 
+            } else if (cellValue.contains("FTL")) {
+                cell.setCellValue("");
+            } else {
+                cell.setCellValue(cellValue);
+            }
         }
-    }
+    }    
 
     private static void cleanApptCell(Cell cell, Sheet sheet, int rowIndex) {
         if (cell.getCellType() == CellType.NUMERIC) {
@@ -463,7 +488,7 @@ public class DataCleaner {
             // Remove specific phrases and unwanted characters
             String[] phrasesToRemove = {
                 "EXAM HOLD AT LAX", "LAX EXAM", "CET EXAM", "EXAM HOLD", "GUARDIAN LOGISTICS SOLUTION CHARLOTTE, NC 28208", 
-                "最少提前3天预约", "@", "AT", "DROP", "ABL", "DOCK#"
+                "最少提前3天预约", "@", "AT", "DROP", "ABL", "DOCK#", "2305008569 HOLD"
             };
             
             for (String phrase : phrasesToRemove) {
@@ -560,24 +585,48 @@ public class DataCleaner {
         } else if (cell.getCellType() == CellType.STRING) {
             String cellValue = cell.getStringCellValue().toUpperCase().trim();
     
-            // Capitalize the whole cell before processing
-            cellValue = cellValue.toUpperCase();
+            // Remove "DROP" from the cell content
+            cellValue = cellValue.replaceAll("DROP", "").trim();
+    
+            // Remove codes that start with 4 capital letters followed by 7 digits
+            cellValue = cellValue.replaceAll("\\b[A-Z]{4}\\d{7}\\b", "").trim();
+    
+            // Replace "CMA" only if it is the only text in the cell
+            if (cellValue.equals("CMA")) {
+                cellValue = "CMA CGM";
+            }
     
             // Define regex pattern to match time formats (e.g., 10:30 AM, 14:30, etc.)
-            Pattern timePattern = Pattern.compile("\\b\\d{1,2}:\\d{2}(?:\\s?(AM|PM))?(?:\\s?[A-Z]+)?\\b");
+            Pattern timePattern = Pattern.compile("\\b\\d{1,2}:\\d{2}(?:\\s?(AM|PM))?\\b");
             Matcher matcher = timePattern.matcher(cellValue);
     
             List<String> times = new ArrayList<>();
     
             while (matcher.find()) {
-                times.add(matcher.group());
+                String time = matcher.group();
+                try {
+                    SimpleDateFormat inputFormat = new SimpleDateFormat("hh:mm a");
+                    SimpleDateFormat outputFormat = new SimpleDateFormat("hh:mm a");
+                    Date date = inputFormat.parse(time);
+                    times.add(outputFormat.format(date));
+                } catch (ParseException e) {
+                    times.add(time); // Keep the original time if parsing fails
+                }
             }
     
-            // Check for times like "10AM live"
+            // Check for times like "1PM" or "11AM"
             Pattern simpleTimePattern = Pattern.compile("\\b\\d{1,2}(AM|PM)\\b");
             Matcher simpleTimeMatcher = simpleTimePattern.matcher(cellValue);
             while (simpleTimeMatcher.find()) {
-                times.add(simpleTimeMatcher.group());
+                String time = simpleTimeMatcher.group();
+                try {
+                    SimpleDateFormat inputFormat = new SimpleDateFormat("hha");
+                    SimpleDateFormat outputFormat = new SimpleDateFormat("hh:mm a");
+                    Date date = inputFormat.parse(time);
+                    times.add(outputFormat.format(date));
+                } catch (ParseException e) {
+                    times.add(time); // Keep the original time if parsing fails
+                }
             }
     
             // Check for numbers that could be converted to time
@@ -603,5 +652,6 @@ public class DataCleaner {
                 cell.setCellValue(""); // Clear cell if no valid time formats are found
             }
         }
-    }    
+    }     
 }
+    
